@@ -31,7 +31,7 @@
     #fs-btn:active{background:rgba(255,102,0,0.4);}
     #hud{position:fixed;inset:0;pointer-events:none;display:none;z-index:10}
     /* TPS crosshair — 4 separate bars with a clear centre gap */
-    #xhair{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:0;height:0}
+    #xhair{position:absolute;top:40%;left:50%;transform:translate(-50%,-50%);width:0;height:0}
     #xhair::before,#xhair::after{content:'';position:absolute;background:#00ee77;border-radius:1px}
     /* vertical bars — top and bottom, leaving a 10px gap in centre */
     #xhair::before{width:2px;height:14px;left:-1px;top:-24px}   /* top bar */
@@ -285,7 +285,7 @@ const vel = { x: 0, y: 0, z: 0 };
 const playerPos = new THREE.Vector3(0, 0, 0);
 let yaw = 0, pitch = 0.3;
 
-const TPS_DIST = 3.2, TPS_HEIGHT = 1.0, TPS_SIDE = 0.7;
+const TPS_DIST = 3.2, TPS_HEIGHT = 1.6, TPS_SIDE = 1.3;
 const WRATE = { rifle: 150, pistol: 400, sniper: 1200 };
 const WLABEL = { rifle: 'MACHINE GUN', pistol: 'PISTOL', sniper: 'SNIPER' };
 const G = -20, JV = 8, WK = 7, RN = 11, PR = 0.35, PH = 1.8;
@@ -712,7 +712,7 @@ function updateTPSCamera() {
     playerPos.y + PH + TPS_DIST*sinP + TPS_HEIGHT,
     playerPos.z + cosY*TPS_DIST*cosP - sinY*TPS_SIDE
   );
-  cam.lookAt(playerPos.x - Math.sin(yaw)*0.4, playerPos.y + PH*0.65, playerPos.z - Math.cos(yaw)*0.4);
+  cam.lookAt(playerPos.x - Math.sin(yaw)*0.8, playerPos.y + PH*0.5, playerPos.z - Math.cos(yaw)*0.8);
 }
 
 // ─── MAIN LOOP ───
