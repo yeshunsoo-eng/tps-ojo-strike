@@ -30,11 +30,16 @@
     #fs-btn{position:absolute;top:15px;right:15px;width:44px;height:44px;background:rgba(17,17,17,0.7);border:2px solid #ff6600;border-radius:6px;color:#ff6600;font-size:1.5rem;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:1000;box-shadow:0 4px 10px rgba(0,0,0,0.5);transition:0.15s;}
     #fs-btn:active{background:rgba(255,102,0,0.4);}
     #hud{position:fixed;inset:0;pointer-events:none;display:none;z-index:10}
-    #xhair{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)}
-    #xhair::before,#xhair::after{content:'';position:absolute;background:#00ee77}
-    #xhair::before{width:2px;height:18px;left:-1px;top:-9px;clip-path:inset(calc(50% - 3px) 0 calc(50% - 3px) 0)}
-    #xhair::after{width:18px;height:2px;left:-9px;top:-1px;clip-path:inset(0 calc(50% - 3px) 0 calc(50% - 3px))}
-    #xhair .dot{position:absolute;width:3px;height:3px;background:#00ee77;border-radius:50%;top:-1.5px;left:-1.5px}
+    /* TPS crosshair — 4 separate bars with a clear centre gap */
+    #xhair{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:0;height:0}
+    #xhair::before,#xhair::after{content:'';position:absolute;background:#00ee77;border-radius:1px}
+    /* vertical bars — top and bottom, leaving a 10px gap in centre */
+    #xhair::before{width:2px;height:14px;left:-1px;top:-24px}   /* top bar */
+    #xhair::after {width:2px;height:14px;left:-1px;top:10px}    /* bottom bar */
+    #xhair .l,#xhair .r{content:'';position:absolute;background:#00ee77;border-radius:1px;width:14px;height:2px;top:-1px} /* horiz */
+    #xhair .l{right:10px}
+    #xhair .r{left:10px}
+    #xhair .dot{position:absolute;width:3px;height:3px;background:#00ee7799;border-radius:50%;top:-1.5px;left:-1.5px}
     #hitfx{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#ff3333;font-size:1rem;font-weight:900;opacity:0;letter-spacing:2px;pointer-events:none}
     #dmg-flash{position:fixed;inset:0;pointer-events:none;z-index:18;opacity:0;background:rgba(200,0,0,0.45);transition:opacity .15s}
     #topbar{position:absolute;top:0;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center}
@@ -137,7 +142,7 @@
 </div>
 
 <div id="hud">
-  <div id="xhair"><div class="dot"></div></div>
+  <div id="xhair"><div class="dot"></div><div class="l"></div><div class="r"></div></div>
   <div id="hitfx">✕ ✕</div>
   <div id="dmg-flash"></div>
   <div id="topbar">
@@ -280,7 +285,7 @@ const vel = { x: 0, y: 0, z: 0 };
 const playerPos = new THREE.Vector3(0, 0, 0);
 let yaw = 0, pitch = 0.3;
 
-const TPS_DIST = 5.5, TPS_HEIGHT = 2.2, TPS_SIDE = 0.8;
+const TPS_DIST = 3.2, TPS_HEIGHT = 1.0, TPS_SIDE = 0.7;
 const WRATE = { rifle: 150, pistol: 400, sniper: 1200 };
 const WLABEL = { rifle: 'MACHINE GUN', pistol: 'PISTOL', sniper: 'SNIPER' };
 const G = -20, JV = 8, WK = 7, RN = 11, PR = 0.35, PH = 1.8;
@@ -406,6 +411,9 @@ async function spawnPlayer(id, name, skinIdx, isLocal) {
   }
 
   addNameTag(group, name, isLocal, skinIdx);
+  group.userData.isLocalPlayer = isLocal;
+  // Tag every child mesh so raycaster can skip this group
+  group.traverse(obj => { obj.userData.isPlayerMesh = true; if (isLocal) obj.userData.isLocalMesh = true; });
   scene.add(group);
   pInst[id] = { group, mixer, clips, isMoving: false, skinIdx };
   return group;
@@ -479,8 +487,11 @@ window.addEventListener('keyup', e => {
   if (e.code==='Tab') showSB(false);
 });
 document.addEventListener('mousedown', e => {
-  if (!inGame||!alive||!pointerLocked||isMobile) return;
-  if (e.button===0) shooting = true;
+  if (!inGame||!alive||isMobile) return;
+  if (e.button===0) {
+    if (!pointerLocked) { canvas.requestPointerLock(); return; } // first click = lock, don't shoot yet
+    shooting = true;
+  }
   if (e.button===2 && curWeapon==='sniper') triggerScope(true);
 });
 document.addEventListener('mouseup', e => {
@@ -701,7 +712,7 @@ function updateTPSCamera() {
     playerPos.y + PH + TPS_DIST*sinP + TPS_HEIGHT,
     playerPos.z + cosY*TPS_DIST*cosP - sinY*TPS_SIDE
   );
-  cam.lookAt(playerPos.x, playerPos.y + PH*0.85, playerPos.z);
+  cam.lookAt(playerPos.x - Math.sin(yaw)*0.4, playerPos.y + PH*0.65, playerPos.z - Math.cos(yaw)*0.4);
 }
 
 // ─── MAIN LOOP ───
@@ -751,24 +762,26 @@ function animate() {
     updateTPSCamera();
     socket.emit('move', {x:playerPos.x, y:playerPos.y, z:playerPos.z, rotY:yaw});
 
-    // Shooting
-    if (shooting && (pointerLocked||isMobile)) {
+    // Shooting — fires whenever mouse is held regardless of pointer lock state check typo
+    if (shooting && (pointerLocked || isMobile)) {
       const now = Date.now();
       if (now-lastShot >= WRATE[curWeapon]) {
         lastShot = now;
         const aimDir = new THREE.Vector3(0,0,-1).applyQuaternion(cam.quaternion).normalize();
         const spawnPos = playerPos.clone().add(new THREE.Vector3(0, PH*0.6, 0));
         const raycaster = new THREE.Raycaster(cam.position, aimDir);
-        const hitObjs = scene.children.filter(c=>!c.userData?.isLaser);
-        const intersects = raycaster.intersectObjects(hitObjs, true);
+        // Exclude lasers AND own player mesh from hit detection
+        const hitObjs = scene.children.filter(c => !c.userData?.isLaser && !c.userData?.isLocalPlayer);
+        const intersects = raycaster.intersectObjects(hitObjs, true)
+          .filter(hit => !hit.object.userData?.isLocalMesh); // double-filter deep children
         let hitDist = 50;
-        if (intersects.length>0) hitDist = intersects[0].distance;
+        if (intersects.length > 0) hitDist = intersects[0].distance;
         const targetPt = cam.position.clone().add(aimDir.clone().multiplyScalar(hitDist));
         const visualDir = new THREE.Vector3().subVectors(targetPt, spawnPos).normalize();
         spawnLaser(spawnPos.x, spawnPos.y, spawnPos.z, visualDir.x, visualDir.y, visualDir.z, SKINS[selectedSkin].laser);
         socket.emit('shoot', {dirX:aimDir.x, dirY:aimDir.y, dirZ:aimDir.z});
         playShootAnim(myId);
-        if (curWeapon!=='rifle') shooting=false;
+        if (curWeapon !== 'rifle') shooting = false;
       }
     }
   }
