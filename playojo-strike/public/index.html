@@ -288,7 +288,7 @@ let yaw = 0, pitch = 0.3;
 const TPS_DIST = 4.0, TPS_HEIGHT = 2.8, TPS_SIDE = 2.2;
 const WRATE = { rifle: 150, pistol: 400, sniper: 1200 };
 const WLABEL = { rifle: 'MACHINE GUN', pistol: 'PISTOL', sniper: 'SNIPER' };
-const G = -20, JV = 8, WK = 7, RN = 11, PR = 0.35, PH = 1.8;
+const G = -20, JV = 8, WK = 7, RN = 11, PR = 0.55, PH = 1.8;
 
 const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
                || ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
@@ -383,39 +383,53 @@ async function spawnPlayer(id, name, skinIdx, isLocal) {
 
   let mixer = null;
   const clips = {};
+  let legBones = []; // for procedural leg animation fallback
 
   if (cached) {
-    // Clone the cached scene so each player gets an independent copy
     const modelClone = cached.scene.clone(true);
     group.add(modelClone);
 
     if (cached.animations && cached.animations.length > 0) {
       mixer = new THREE.AnimationMixer(modelClone);
 
-      // Try to find standard animation clips by common naming conventions
-      const idleClip  = findClip(cached.animations, 'idle', 'stand', 'breathing');
-      const walkClip  = findClip(cached.animations, 'walk', 'run', 'move', 'strafe');
-      const shootClip = findClip(cached.animations, 'shoot', 'fire', 'attack', 'aim');
+      const idleClip  = findClip(cached.animations, 'idle', 'stand', 'breathing', 'tpose', 't-pose');
+      const walkClip  = findClip(cached.animations, 'walk', 'run', 'move', 'jog', 'strafe', 'locomotion');
+      const shootClip = findClip(cached.animations, 'shoot', 'fire', 'attack', 'aim', 'shoot');
+
+      // If still no walk clip found, use the second clip (often walk in Mixamo rigs)
+      const fallbackWalk = !walkClip && cached.animations.length > 1 ? cached.animations[1] : null;
 
       if (idleClip)  clips.idle  = mixer.clipAction(idleClip);
       if (walkClip)  clips.walk  = mixer.clipAction(walkClip);
+      else if (fallbackWalk) clips.walk = mixer.clipAction(fallbackWalk);
       if (shootClip) clips.shoot = mixer.clipAction(shootClip);
 
-      // Start idle by default
-      if (clips.idle) { clips.idle.play(); }
-      else if (clips.walk) { clips.walk.play(); } // fallback if no idle
+      if (clips.idle) clips.idle.play();
+      else if (clips.walk) clips.walk.play();
+    }
+
+    // Collect leg bones for procedural swing fallback (used when no walk anim exists)
+    if (!clips.walk) {
+      modelClone.traverse(obj => {
+        if (obj.isBone || obj.isSkinnedMesh) return;
+        const n = (obj.name || '').toLowerCase();
+        if (n.includes('leg') || n.includes('thigh') || n.includes('shin') ||
+            n.includes('foot') || n.includes('calf') || n.includes('femur')) {
+          legBones.push(obj);
+        }
+      });
     }
   } else {
-    // GLB failed — use box mesh fallback
     group.add(makeFallbackMesh(skinIdx));
+    // Fallback box mesh: grab the body parts for procedural swing
+    group.children.forEach((c, i) => { if (i > 0) legBones.push(c); });
   }
 
   addNameTag(group, name, isLocal, skinIdx);
   group.userData.isLocalPlayer = isLocal;
-  // Tag every child mesh so raycaster can skip this group
   group.traverse(obj => { obj.userData.isPlayerMesh = true; if (isLocal) obj.userData.isLocalMesh = true; });
   scene.add(group);
-  pInst[id] = { group, mixer, clips, isMoving: false, skinIdx };
+  pInst[id] = { group, mixer, clips, isMoving: false, skinIdx, legBones, walkPhase: 0 };
   return group;
 }
 
@@ -721,8 +735,25 @@ function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
 
-  // Tick all animation mixers
-  Object.values(pInst).forEach(inst => { if (inst.mixer) inst.mixer.update(dt); });
+  // Tick all animation mixers + procedural leg swing fallback
+  Object.values(pInst).forEach(inst => {
+    if (inst.mixer) inst.mixer.update(dt);
+
+    // Procedural leg swing — used when GLB has no walk animation clip
+    if (inst.legBones && inst.legBones.length > 0 && inst.isMoving) {
+      inst.walkPhase = (inst.walkPhase || 0) + dt * 8; // swing speed
+      inst.legBones.forEach((bone, i) => {
+        // Alternate legs: even index swings one way, odd the other
+        const phase = inst.walkPhase + (i % 2 === 0 ? 0 : Math.PI);
+        bone.rotation.x = Math.sin(phase) * 0.45;
+      });
+    } else if (inst.legBones && inst.legBones.length > 0 && !inst.isMoving) {
+      // Return legs to rest position smoothly
+      inst.legBones.forEach(bone => {
+        bone.rotation.x *= 0.85; // damp toward 0
+      });
+    }
+  });
 
   // Advance lasers
   for (let i=lasers.length-1;i>=0;i--) {
